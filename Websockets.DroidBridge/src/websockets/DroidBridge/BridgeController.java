@@ -12,20 +12,16 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
-//https://github.com/koush/AndroidAsync
-import com.koushikdutta.async.AsyncServer;
-import com.koushikdutta.async.callback.CompletedCallback;
-import com.koushikdutta.async.http.AsyncHttpClient;
-import com.koushikdutta.async.http.AsyncHttpGet;
-import com.koushikdutta.async.http.AsyncHttpRequest;
-import com.koushikdutta.async.http.WebSocket;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.WebSocket;
+import okio.ByteString;
 
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.security.cert.X509Certificate;
-import java.util.Map;
-
+import java.util.ArrayList;
+import java.util.List;
 
 public class BridgeController {
 
@@ -43,60 +39,72 @@ public class BridgeController {
     }
 
     // connect websocket
-    public void Open(final String wsuri, final String protocol, final Map<String, String> headers) {
+    public void Open(final String wsuri, final String protocol) {
         Log("BridgeController:Open");
 
-        AsyncHttpClient.getDefaultInstance().getSSLSocketMiddleware().setTrustManagers(new TrustManager[] {
-                new X509TrustManager() {
-                    public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-                    public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
-                }
-        });
-
-        SSLContext sslContext = null;
-
         try {
-            sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(null, null, null);
+            OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder();
 
-            AsyncHttpClient.getDefaultInstance().getSSLSocketMiddleware().setSSLContext(sslContext);
-        } catch (Exception e){
-            Log.d("SSLCONFIG", e.toString(), e);
+             Request request = new Request.Builder()
+                    .url(wsuri)
+                    .build();
+
+            OkHttpClient client = enableTls12OnPreLollipop(clientBuilder).build();
+
+            WebSocket webSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
+
+                        @Override
+                        public void onOpen(WebSocket webSocket, okhttp3.Response response) {
+                            // connection succeeded
+                            RaiseOpened();
+                            mConnection = webSocket;
+                        }
+
+                        @Override
+                        public void onMessage(WebSocket webSocket, String text) {
+                            // text message received
+                            try {
+                                RaiseMessage(text);
+                            } catch (Exception ex) {
+                                RaiseError("Error onMessage - " + ex.getMessage());
+                            }
+                        }
+
+                        @Override
+                        public void onMessage(WebSocket webSocket, ByteString bytes) {
+                            // binary message received
+                            try {
+                                RaiseMessage(bytes.hex());
+
+                            } catch (Exception ex) {
+                                RaiseError("Error onMessage - " + ex.getMessage());
+                            }
+                        }
+
+                        @Override
+                        public void onClosed(WebSocket webSocket, int code, String reason) {
+                            // no more messages and the connection should be released
+                            RaiseClosed();
+                            mConnection = null;
+                        }
+
+                        @Override
+                        public void onFailure(WebSocket webSocket, Throwable t, okhttp3.Response response) {
+                            // unexpected error
+                            RaiseError(response.message());
+                            RaiseClosed();
+                            mConnection = null;
+                        }
+                    }
+                );
+
+            // Trigger shutdown of the dispatcher's executor so this process can exit cleanly.
+            client.dispatcher().executorService().shutdown();
+
+        }catch (Exception ex){
+            Error("Open "+ex.getMessage());
         }
 
-        AsyncHttpGet get = new AsyncHttpGet(wsuri.replace("ws://", "http://").replace("wss://", "https://"));
-        for (Map.Entry<String, String> entry : headers.entrySet()) {
-            get.addHeader(entry.getKey(), entry.getValue());
-        }
-        AsyncHttpClient.getDefaultInstance().websocket((AsyncHttpRequest)get, protocol, new AsyncHttpClient
-                .WebSocketConnectCallback() {
-            @Override
-            public void onCompleted(Exception ex, WebSocket webSocket) {
-                if (ex != null) {
-                    Error(ex.toString());
-                    return;
-                }
-
-                mConnection = webSocket;
-                RaiseOpened();
-
-                webSocket.setClosedCallback(new CompletedCallback() {
-                    @Override
-                    public void onCompleted(Exception e) {
-                        mConnection = null;
-                        RaiseClosed();
-                    }
-                });
-
-
-                webSocket.setStringCallback(new WebSocket.StringCallback() {
-                    public void onStringAvailable(final String s) {
-                        RaiseMessage(s);
-                    }
-                });
-            }
-        });
     }
 
     public void Close() {
@@ -105,7 +113,7 @@ public class BridgeController {
         {
             if(mConnection == null)
                 return;
-            mConnection.close();
+            mConnection.close(1000,"CLOSE_NORMAL");
 
         }catch (Exception ex){
             RaiseError("Error Close - "+ex.getMessage());
@@ -118,6 +126,8 @@ public class BridgeController {
         {
             if(mConnection == null)
                 return;
+                 Log.d(TAG, message);
+
             mConnection.send(message);
         }catch (Exception ex){
             RaiseError("Error Send - "+ex.getMessage());
@@ -126,13 +136,11 @@ public class BridgeController {
 
     private void Log(final String args) {
         Log.d(TAG, args);
-
         RaiseLog(args);
     }
 
     private void Error(final String args) {
         Log.e(TAG, args);
-
         RaiseError(String.format("Error: %s", args));
     }
 
@@ -151,7 +159,8 @@ public class BridgeController {
             if(proxy != null)
                 proxy.RaiseClosed();
         }catch(Exception ex){
-            RaiseClosed();
+            //Don't try to close as it just tried to close and failed and will keep hitting this over and over
+            // RaiseClosed();
             Error("Failed to Close");
         }
     }
@@ -184,5 +193,36 @@ public class BridgeController {
             RaiseClosed();
             Error("Failed to Error");
         }
+    }
+
+    public static OkHttpClient.Builder enableTls12OnPreLollipop(OkHttpClient.Builder client) {
+        if (android.os.Build.VERSION.SDK_INT >= 16 && android.os.Build.VERSION.SDK_INT < 22) {
+            try {
+                SSLContext sc = SSLContext.getInstance("TLSv1.2");
+                sc.init(null, null, null);
+                client.sslSocketFactory(new Tls12SocketFactory(sc.getSocketFactory()),
+                                new X509TrustManager() {
+                                    public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+                                    public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+                                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
+                                }
+                );
+
+                okhttp3.ConnectionSpec cs = new okhttp3.ConnectionSpec.Builder(okhttp3.ConnectionSpec.MODERN_TLS)
+                        .tlsVersions(okhttp3.TlsVersion.TLS_1_2)
+                        .build();
+
+                List<okhttp3.ConnectionSpec> specs = new ArrayList<>();
+                specs.add(cs);
+                specs.add(okhttp3.ConnectionSpec.COMPATIBLE_TLS);
+                specs.add(okhttp3.ConnectionSpec.CLEARTEXT);
+
+                client.connectionSpecs(specs);
+            } catch (Exception exc) {
+                Log.e("OkHttpTLSCompat", "Error while setting TLS 1.2", exc);
+            }
+        }
+
+        return client;
     }
 }

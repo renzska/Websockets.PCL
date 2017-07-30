@@ -1,7 +1,7 @@
 <component name="libraryTable">
-  <library name="androidasync-2.1.6">
+  <library name="okio-1.13.0">
     <CLASSES>
-      <root url="jar://$PROJECT_DIR$/libs/androidasync-2.1.6.jar!/" />
+      <root url="jar://$PROJECT_DIR$/libs/okio-1.13.0.jar!/" />
     </CLASSES>
     <JAVADOC />
     <SOURCES />
