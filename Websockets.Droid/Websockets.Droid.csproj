@@ -54,9 +54,6 @@
     <TransformFile Include="Transforms\EnumMethods.xml" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedJar Include="Jars\Websockets.DroidBridge.jar" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\Websockets\Websockets.csproj">
       <Project>{1a23d79e-7a64-450c-960c-4848b0149e3d}</Project>
       <Name>Websockets</Name>
@@ -67,6 +64,9 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedReferenceJar Include="Jars\okio-1.13.0.jar" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedJar Include="Jars\Websockets.DroidBridge.jar" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath)\Xamarin\Android\Xamarin.Android.Bindings.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

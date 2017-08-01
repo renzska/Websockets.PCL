@@ -8,25 +8,31 @@
  * .NET Methods <-->  BridgeClient (Java / NDK) <--->  Websocket (Java)
  */
 package websockets.DroidBridge;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.WebSocket;
+import okhttp3.*;
 import okio.ByteString;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.TrustManager;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+import static okhttp3.OkHttpClient.*;
 
 public class BridgeController {
 
+    private static final int NORMAL_CLOSURE_STATUS = 1000;
+
     private WebSocket mConnection;
-    private static String TAG = "websockets";
+    private static String TAG = "[Android.Bridge.Websockets]";
 
     //MUST BE SET
     public BridgeProxy proxy;
@@ -39,30 +45,44 @@ public class BridgeController {
     }
 
     // connect websocket
-    public void Open(final String wsuri, final String protocol) {
-        Log("BridgeController:Open");
+    public void Open(final String wsuri, final String protocol, final Map<String, String> headers) {
+        Log("[BridgeController] Open Start");
 
         try {
-            OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder();
+            Headers headerBuild = Headers.of(headers);
 
-             Request request = new Request.Builder()
+            Builder clientBuilder = new Builder()
+                    .readTimeout(0, TimeUnit.MILLISECONDS);
+
+            Request request = new Request.Builder()
                     .url(wsuri)
+                    .headers(headerBuild)
                     .build();
 
-            OkHttpClient client = enableTls12OnPreLollipop(clientBuilder).build();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN && Build.VERSION.SDK_INT <= Build.VERSION_CODES.LOLLIPOP) {
+                enableTls12(clientBuilder);
+            }
+
+            OkHttpClient client = clientBuilder.build();
 
             WebSocket webSocket = client.newWebSocket(request, new okhttp3.WebSocketListener() {
 
+                        /**
+                         * Invoked when a web socket has been accepted by the remote peer and may begin transmitting
+                         * messages.
+                         */
                         @Override
                         public void onOpen(WebSocket webSocket, okhttp3.Response response) {
+                            Log("[BridgeController OkHttp] onOpen: " + response.message());
                             // connection succeeded
-                            RaiseOpened();
                             mConnection = webSocket;
+                            RaiseOpened();
                         }
 
+                        /** Invoked when a text (type {@code 0x1}) message has been received. */
                         @Override
                         public void onMessage(WebSocket webSocket, String text) {
-                            // text message received
+                            Log("[BridgeController OkHttp] onMessage (text): " + text);
                             try {
                                 RaiseMessage(text);
                             } catch (Exception ex) {
@@ -70,31 +90,54 @@ public class BridgeController {
                             }
                         }
 
+                        /** Invoked when a binary (type {@code 0x2}) message has been received. */
                         @Override
                         public void onMessage(WebSocket webSocket, ByteString bytes) {
-                            // binary message received
+                            Log("[BridgeController OkHttp] onMessage (bytes): " + bytes.hex());
                             try {
-                                RaiseMessage(bytes.hex());
-
+                                /*RaiseData(bytes);*/
                             } catch (Exception ex) {
                                 RaiseError("Error onMessage - " + ex.getMessage());
                             }
                         }
 
+                        /** Invoked when the peer has indicated that no more incoming messages will be transmitted. */
                         @Override
-                        public void onClosed(WebSocket webSocket, int code, String reason) {
-                            // no more messages and the connection should be released
-                            RaiseClosed();
-                            mConnection = null;
+                        public void onClosing(WebSocket webSocket, int code, String reason)
+                        {
+                            Log("[BridgeController OkHttp] onClosing");
+                            //mConnection.close(NORMAL_CLOSURE_STATUS, null);
                         }
 
+                        /**
+                         * Invoked when both peers have indicated that no more messages will be transmitted and the
+                         * connection has been successfully released. No further calls to this listener will be made.
+                         */
+                        @Override
+                        public void onClosed(WebSocket webSocket, int code, String reason) {
+                            Log("[BridgeController OkHttp] onClosed: " + reason);
+                            // no more messages and the connection should be released
+                            mConnection = null;
+                            RaiseClosed();
+                        }
+
+                        /**
+                         * Invoked when a web socket has been closed due to an error reading from or writing to the
+                         * network. Both outgoing and incoming messages may have been lost. No further calls to this
+                         * listener will be made.
+                         */
                         @Override
                         public void onFailure(WebSocket webSocket, Throwable t, okhttp3.Response response) {
                             // unexpected error
-                            RaiseError(response.message());
-                            RaiseClosed();
+                            Log("[BridgeController OkHttp] onFailure");
+                            //ignore errors, fire closed, which will require a reconnect on the other side of things
+                            //webSocket.close(NORMAL_CLOSURE_STATUS, null);
+                            //RaiseError(response.message());
                             mConnection = null;
+                            RaiseClosed();
                         }
+
+
                     }
                 );
 
@@ -105,33 +148,50 @@ public class BridgeController {
             Error("Open "+ex.getMessage());
         }
 
+        Log("[BridgeController] Open Finish");
     }
 
     public void Close() {
-
+        Log("[BridgeController] Close Start");
         try
         {
-            if(mConnection == null)
-                return;
-            mConnection.close(1000,"CLOSE_NORMAL");
+            if(mConnection != null) {
+                Log("[BridgeController] Close - mConnection != null");
+                mConnection.close(NORMAL_CLOSURE_STATUS, null);
+                mConnection = null;
+            }
+            else
+            {
+                Log("[BridgeController] Close - mConnection == null");
+            }
+
 
         }catch (Exception ex){
             RaiseError("Error Close - "+ex.getMessage());
         }
+        Log("[BridgeController] Close Finish");
     }
 
     // send a message
     public void Send(final String message) {
+        Log("[BridgeController] Send Start");
         try
         {
             if(mConnection == null)
+            {
+                Log("[BridgeController] Send Start: mConnection == null");
                 return;
-                 Log.d(TAG, message);
-
-            mConnection.send(message);
+            }
+            else
+            {
+                Log("[BridgeController] Send Start: Before mConnection.send(message)");
+                mConnection.send(message);
+                Log("[BridgeController] Send Start: After mConnection.send(message)");
+            }
         }catch (Exception ex){
-            RaiseError("Error Send - "+ex.getMessage());
+            RaiseError("Error Send - " + ex.getMessage());
         }
+        Log("[BridgeController] Send Finish");
     }
 
     private void Log(final String args) {
@@ -140,7 +200,7 @@ public class BridgeController {
     }
 
     private void Error(final String args) {
-        Log.e(TAG, args);
+        Log.d(TAG, args);
         RaiseError(String.format("Error: %s", args));
     }
 
@@ -171,9 +231,19 @@ public class BridgeController {
                 proxy.RaiseMessage(message);
         }catch(Exception ex){
             RaiseClosed();
-            Error("Failed to Raise");
+            Error("Failed to Raise Message");
         }
     }
+
+    /*private void RaiseData(ByteString data) {
+        try{
+            if(proxy != null)
+                proxy.RaiseData(data);
+        }catch(Exception ex){
+            RaiseClosed();
+            Error("Failed to Raise Data");
+        }
+    }*/
 
     private void RaiseLog(String message) {
         try{
@@ -195,34 +265,32 @@ public class BridgeController {
         }
     }
 
-    public static OkHttpClient.Builder enableTls12OnPreLollipop(OkHttpClient.Builder client) {
-        if (android.os.Build.VERSION.SDK_INT >= 16 && android.os.Build.VERSION.SDK_INT < 22) {
-            try {
-                SSLContext sc = SSLContext.getInstance("TLSv1.2");
-                sc.init(null, null, null);
-                client.sslSocketFactory(new Tls12SocketFactory(sc.getSocketFactory()),
-                                new X509TrustManager() {
-                                    public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-                                    public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-                                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
-                                }
-                );
+    /**
+     * Enable TLS on the OKHttp builder by setting a custom SocketFactory
+     */
+    private static OkHttpClient.Builder enableTls12(OkHttpClient.Builder client) {
+        Log.i(TAG, "Enabling HTTPS compatibility mode");
+        try {
 
-                okhttp3.ConnectionSpec cs = new okhttp3.ConnectionSpec.Builder(okhttp3.ConnectionSpec.MODERN_TLS)
-                        .tlsVersions(okhttp3.TlsVersion.TLS_1_2)
-                        .build();
+            client.sslSocketFactory(new TLSSocketFactory(), new X509TrustManager() {
+                public void checkClientTrusted(X509Certificate[] chain, String authType) {}
+                public void checkServerTrusted(X509Certificate[] chain, String authType) {}
+                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
+            });
 
-                List<okhttp3.ConnectionSpec> specs = new ArrayList<>();
-                specs.add(cs);
-                specs.add(okhttp3.ConnectionSpec.COMPATIBLE_TLS);
-                specs.add(okhttp3.ConnectionSpec.CLEARTEXT);
+            ConnectionSpec cs = new ConnectionSpec.Builder(okhttp3.ConnectionSpec.MODERN_TLS)
+                    .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_1)
+                    .build();
 
-                client.connectionSpecs(specs);
-            } catch (Exception exc) {
-                Log.e("OkHttpTLSCompat", "Error while setting TLS 1.2", exc);
-            }
+            List<ConnectionSpec> specs = new ArrayList<>();
+            specs.add(cs);
+            specs.add(ConnectionSpec.COMPATIBLE_TLS);
+            specs.add(ConnectionSpec.CLEARTEXT);
+
+            client.connectionSpecs(specs);
+        } catch (Exception exc) {
+            Log.e(TAG, "Error while setting TLS", exc);
         }
-
         return client;
     }
 }

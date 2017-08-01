@@ -1,16 +1,20 @@
 ## WebSockets.Pcl
 
+### This is a fork of the Websockets.Pcl that replaces AndroidAsync with OkHttp and its new Websocket implementation (Dec 2016) that allows custom SocketFactories
+- [iOS] Fix for multiple RaiseClosed events being fired when you close and open an existing IWebsocketConnection: https://github.com/NVentimiglia/Websockets.PCL/issues/28
+- [Android] Implements support for Android 4.1 - 4.4 TLS support: https://github.com/square/okhttp/issues/2372
+
 WebSockets.PCL is a portable class library, profile 259, C# WebSocket implementation.
 
 The motivation for this project was three part :
 
 1) Having a completely different websocket implementation on every platform is a pain.
 
-2) OkHttp.Ws Crashes with a fatal signal 11 if you loose internet
+2) OkHttp.Ws Crashes with a fatal signal 11 if you loose internet (no longer applies, replaced with new Websocket OkHttp implementation where onFailure is fired on a timeout, but is treated as a onClosed (in my implementation))
 
 3) My original Mono implementation could not support TLS or SSL (Because Mono is janky)
 
-This project is a binding library that makes use of native websockets to get around the limitations and jank of mono based websockets. On IOS I use SocketRocket because it works fine. On Android I wrote a custom binding library in Java and use AndroidAsync. On the WP8 we wrap around Websockets4Net. On the other platforms we wrap the default MSDN implementation. Really the most valuable part is the android implementation... but why not unify ?
+This project is a binding library that makes use of native websockets to get around the limitations and jank of mono based websockets. On IOS I use SocketRocket because it works fine. On Android I wrote a custom binding library in Java and use OkHttp. On the WP8 we wrap around Websockets4Net. On the other platforms we wrap the default MSDN implementation. Really the most valuable part is the android implementation... but why not unify?
 
 
 https://www.nuget.org/packages/Websockets.Pcl/

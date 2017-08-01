@@ -1,5 +1,7 @@
 package websockets.DroidBridge;
 
+import okio.ByteString;
+
 /**
  * Created by Nicholas on 1/23/2016.
  * Defines the C# callback handler
@@ -11,4 +13,7 @@ public class BridgeProxy {
     public void RaiseMessage    (String message){    }
     public void RaiseLog        (String message){    }
     public void RaiseError      (String message){    }
+    //public void RaiseData       (ByteString message){    }
+
+
 }

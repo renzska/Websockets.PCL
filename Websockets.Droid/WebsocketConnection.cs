@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using Android.Runtime;
 using Websockets.DroidBridge;
+using Javax.Xml.Transform;
 
 namespace Websockets.Droid
 {
@@ -21,16 +23,21 @@ namespace Websockets.Droid
 
         private BridgeController _controller;
 
-        static WebsocketConnection()
+        public WebsocketConnection()
         {
-            System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
         }
+
+		//fixes {System.MissingMethodException: No constructor found for Websockets.Droid.WebsocketConnection::.ctor(System.IntPtr, Android.Runtime.JniHandleOwnership) 
+		public WebsocketConnection(IntPtr javaReference, JniHandleOwnership transfer) : base(javaReference, transfer)
+        {
+		}
         
         /// <summary>
         /// Factory Initializer
         /// </summary>
         public static void Link()
         {
+            System.Net.ServicePointManager.ServerCertificateValidationCallback += (o, certificate, chain, errors) => true;
             WebSocketFactory.Init(() => new WebsocketConnection());
         }
 
@@ -38,8 +45,11 @@ namespace Websockets.Droid
         {
             try
             {
-                IsOpen = false;
-                _controller.Close();
+				IsOpen = false;
+                if (_controller != null)
+                {
+                    _controller.Close();                   
+                }
             }
             catch (Exception ex)
             {
@@ -77,6 +87,13 @@ namespace Websockets.Droid
             try
             {
                 Close();
+
+                if (_controller != null)
+                {
+                    _controller.Dispose();
+                    _controller = null;
+                }
+
                 OnDispose(this);
                 base.Dispose(disposing);
             }
@@ -92,15 +109,12 @@ namespace Websockets.Droid
             try
             {
                 _controller.Send(message);
-
             }
             catch (Exception ex)
             {
                 OnError(ex.Message);
             }
         }
-
-        //
 
         public override unsafe void RaiseClosed()
         {
@@ -126,6 +140,12 @@ namespace Websockets.Droid
             OnMessage(p1);
             base.RaiseMessage(p1);
         }
+
+		//public override unsafe void RaiseData(byte[] p1)
+		//{
+		//	OnData(p1);
+		//	base.RaiseData(p1);
+		//}
 
         public override unsafe void RaiseOpened()
         {
